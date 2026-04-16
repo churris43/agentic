@@ -1,0 +1,56 @@
+{
+  "Comment": "Layer 2 — Step Functions state machine. Defines order, parallelism, and join. No business logic here.",
+  "StartAt": "ExtractInfo",
+  "States": {
+
+    "ExtractInfo": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:123456789:function:extract_info",
+      "Next": "Parallel_tasks"
+    },
+
+    "Parallel_tasks": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "FetchExternalDB",
+          "States": {
+            "TaskB": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:us-east-1:123456789:function:fetch_external_db",
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "FetchCitations",
+          "States": {
+            "TaskC": {
+              "Type": "Task",
+              "Resource": "arn:aws:lambda:us-east-1:123456789:function:fetchCitations",
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "EvaluateResults"
+    },
+
+    "TaskD": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:123456789:function:evaluate_results",
+      "Next": "SendEmail"
+    },
+
+    "SendEmail": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:123456789:NotifyUser",
+        "Message.$": "$.email_body"
+      },
+      "End": true
+    }
+
+  }
+}
