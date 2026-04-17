@@ -1,5 +1,8 @@
 <?php
-
+/**
+This code is to be treated as pseudocode and will have syntax mistakes.
+It was written just to conceptualise an idea
+*/
 namespace App\Lambda;
 
 use Aws\S3\S3Client;
@@ -15,6 +18,7 @@ class ExtractInfoWorkerHandler
     private S3Client $s3;
     private AnthropicClient $llm;
 
+    // This will be different as the LLM will be use through Bedrock
     private const MODEL = 'claude-sonnet-4-20250514';
     private const MAX_TOKENS = 1000;
 
@@ -23,15 +27,15 @@ class ExtractInfoWorkerHandler
 
         You have been given:
         - s3_path: the location of a PDF document in S3
-        - db_id: a record ID to associate the findings with
+        - labReportId: a record ID to associate the findings with
 
         Your job:
         1. Convert the PDF at the given s3_path to plain text using the convert_pdf_to_text tool
-        2. Extract all dates found in that text using the extract_dates tool. This is just an example to keep it simple
-        3. Store the extracted dates into the database using the store_dates tool. This is just an example to keep it simple
+        2. Extract genes, variants and other information found in that text using the extract_information tool. 
+        3. Store the information into the database using the store_information tool.
 
         When you are done, respond with a JSON object in this exact format:
-        {"status": "complete", "summary": "<brief summary of what you found>", "db_id": "<the db_id>"}
+        {"status": "complete", "summary": "<brief summary of what you found>", "labReportId": "<the labReportId>"}
         PROMPT;
 
     // ── Tool definitions passed to the LLM ──────────────────────────────────
@@ -52,36 +56,36 @@ class ExtractInfoWorkerHandler
             ],
         ],
         [
-            'name'         => 'extract_dates',
-            'description'  => 'Scans plain text and extracts anything that looks like a date. Returns a JSON object with a "dates" array.',
+            'name'         => 'extract_information',
+            'description'  => 'Scans plain text and extracts relevant information. Returns an array.',
             'input_schema' => [
                 'type'       => 'object',
                 'properties' => [
                     'text' => [
                         'type'        => 'string',
-                        'description' => 'The plain text to scan for dates.',
+                        'description' => 'The plain text to scan for information.',
                     ],
                 ],
                 'required'   => ['text'],
             ],
         ],
         [
-            'name'         => 'store_dates',
-            'description'  => 'Stores an array of extracted dates into the findings table in the database.',
+            'name'         => 'store_information',
+            'description'  => 'Stores an array of extracted information into the findings table in the database.',
             'input_schema' => [
                 'type'       => 'object',
                 'properties' => [
-                    'db_id' => [
+                    'labReportId' => [
                         'type'        => 'string',
                         'description' => 'The record ID to associate the findings with.',
                     ],
-                    'dates' => [
+                    'information' => [
                         'type'        => 'array',
-                        'description' => 'Array of date strings to store.',
-                        'items'       => ['type' => 'string'],
+                        'description' => 'Array of information to store.',
+                        'items'       => [],
                     ],
                 ],
-                'required'   => ['db_id', 'dates'],
+                'required'   => ['labReportId', 'information'],
             ],
         ],
     ];
@@ -102,25 +106,25 @@ class ExtractInfoWorkerHandler
 
     /**
      * $event contains the output from the previous Step Functions state:
-     * ['s3_path' => '...', 'db_id' => '...']
+     * ['s3_path' => '...', 'labReportId' => '...']
      */
     public function handle(array $event): array
     {
         $s3Path = $event['s3_path'];
-        $dbId   = $event['db_id'];
+        $reportLabId   = $event['labReportId'];
 
         // This return value becomes the input to the next state in Step Functions
-        return $this->runAgentLoop($s3Path, $dbId);
+        return $this->runAgentLoop($s3Path, $reportLabId);
     }
 
     // ── Agent loop ───────────────────────────────────────────────────────────
 
-    private function runAgentLoop(string $s3Path, string $dbId): array
+    private function runAgentLoop(string $s3Path, string $reportLabId): array
     {
         $messages = [
             [
                 'role'    => 'user',
-                'content' => "Process this document. s3_path={$s3Path}, db_id={$dbId}",
+                'content' => "Process this document. s3_path={$s3Path}, labReportId={$reportLabId}",
             ],
         ];
 
@@ -171,8 +175,8 @@ class ExtractInfoWorkerHandler
     {
         return match ($toolName) {
             'convert_pdf_to_text' => $this->convertPdfToText($input['s3_path']),
-            'extract_dates'       => $this->extractDates($input['text']),
-            'store_dates'         => $this->storeDates($input['db_id'], $input['dates']),
+            'extract_information'       => $this->extractInformation($input['text']),
+            'store_information'         => $this->storeInformation($input['labReportId'], $input['information']),
             default               => "Unknown tool: {$toolName}",
         };
     }
@@ -200,54 +204,29 @@ class ExtractInfoWorkerHandler
     }
 
     /**
-     * Tool 2 — Scan plain text for anything that looks like a date.
-     * Returns a JSON object: {"dates": ["Jan 1 2024", "2024-06-15", ...]}
+     * Tool 2 — Scan plain text for anything that looks like variant, genes, etc ....
+     * Returns an array with the information found
      */
-    private function extractDates(string $text): string
+    private function extractInformation(string $text): array
     {
-        $patterns = [
-            // ISO: 2024-01-31
-            '/\b\d{4}-\d{2}-\d{2}\b/',
-            // AU/EU numeric: 31/01/2024 or 31-01-2024
-            '/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}\b/',
-            // US numeric: 01/31/2024
-            '/\b\d{1,2}\/\d{1,2}\/\d{4}\b/',
-            // Long form: January 31, 2024 or 31 January 2024
-            '/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b/i',
-            '/\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b/i',
-            // Short month: Jan 31 2024 or 31 Jan 2024
-            '/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2},?\s+\d{4}\b/i',
-            '/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{4}\b/i',
-        ];
-
-        $dates = [];
-        foreach ($patterns as $pattern) {
-            preg_match_all($pattern, $text, $matches);
-            $dates = array_merge($dates, $matches[0]);
-        }
-
-        // Deduplicate and reindex
-        $dates = array_values(array_unique($dates));
-
-        return json_encode(['dates' => $dates]);
+        // Code to extract Information 
     }
 
     /**
-     * Tool 3 — Store the extracted dates in the findings table.
+     * Tool 3 — Store the extracted information in the findings table.
      * Assumes a Laravel DB connection is already configured.
-     * Upserts based on db_id so re-runs don't create duplicate rows.
+     * Upserts based on labReportId so re-runs don't create duplicate rows.
      */
-    private function storeDates(string $dbId, array $dates): string
+    private function storeInformation(int labReportId, array $information): string
     {
+        // Code to loop through the extraced information and insert it into a table
         \Illuminate\Support\Facades\DB::table('findings')->insert(
             [
-                'reportLabId' => $dbId,
-                'dates'       => json_encode($dates),
-                'updated_at'  => now(),
-                'created_at'  => now(),
+                'reportLabId' => $reportLabId,
+                .....
             ],
         );
 
-        return "Stored " . count($dates) . " date(s) for id={$dbId}";
+        return ;
     }
 }
