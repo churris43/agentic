@@ -1,3 +1,4 @@
+```mermaid
 erDiagram
   Patient ||--o{ LabReport : "has"
   LabReport ||--o| Classification : "classified by"
@@ -78,3 +79,4 @@ erDiagram
     approval_date datetime
     approved_by int
   }
+```
