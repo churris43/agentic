@@ -26,18 +26,18 @@ class OrchestratorHandler
  
     /**
      * Lambda entry point.
-     * $event contains: ['s3_path' => '...', 'db_id' => '...']
+     * $event contains: ['s3_path' => '...', 'labReportId' => '...']
      */
     public function handle(array $event): array
     {
         $s3Path = $event['s3_path'];
-        $dbId   = $event['db_id'];
+        $dbId   = $event['labReportId'];
  
         $response = $this->sfn->startExecution([
             'stateMachineArn' => $this->stateMachineArn,
             'input'           => json_encode([
                 's3_path' => $s3Path,
-                'db_id'   => $dbId,
+                'db_id'   => labReportId,
             ]),
         ]);
  
