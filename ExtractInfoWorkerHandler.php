@@ -127,8 +127,13 @@ class ExtractInfoWorkerHandler
                 'content' => "Process this document. s3_path={$s3Path}, labReportId={$reportLabId}",
             ],
         ];
-
+        $maxIterations = 10;
+        $iteration = 0;
+        
         while (true) {
+            if (++$iteration > $maxIterations) {
+                throw new AgentLoopException("Agent exceeded max iterations ({$maxIterations})");
+            }
             $response = $this->llm->messages()->create([
                 'model'      => self::MODEL,
                 'max_tokens' => self::MAX_TOKENS,
